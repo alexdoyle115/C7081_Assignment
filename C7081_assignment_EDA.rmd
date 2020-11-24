@@ -1,0 +1,261 @@
+---
+title: "Data Analysis"
+author: "Alex Doyle"
+date: "11/21/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Data Exploration 
+
+## Contents 
+
+1. Feature Data Clenseing
+2. Data Analysis 
+```{r libraries, include = FALSE, }
+library(car)      # For correlation
+library(dplyr)    # For data transformation
+library(gbm)      # For boostying
+library(GGally)   # For decision trees
+library(ggplot2)  # For plotting
+library(leaps)    # For subsets
+library(MASS)     # For glm
+library(openxlsx) # For reading in Data
+library(tidyverse)    # 
+```
+
+```{r, include = FALSE}
+setwd("C:/Users/alexd/Desktop/C7801_Assignment")
+NFL_data <- read.xlsx("arrests_book.xlsx")
+```
+```{r, echo = FALSE}
+getwd()
+str(NFL_data)
+```
+
+From the first couple rows of data we can get a sense of the variables. We can see that there are 1006 observations of 11 variables. At a glance there are also a number of teams that didn't release any information about how many arrests occurred. These teams were Cleveland, New Orleans, Buffalo, Miami and Oakland. 
+
+###  1.0 Feature Data clenseing  
+From reading the original README from kaggle as mentioned above it does not include numbers from various team but there is are also varibales that require editing. 
+
+**Detroit**
+```{r detroit, echo=FALSE, results = FALSE}
+which(is.na(NFL_data$arrests) == TRUE)
+detroit <- which(is.na(NFL_data$arrests) == TRUE)
+NFL_data <- NFL_data[-c(detroit),]
+```
+```{r, include = FALSE}
+l.detroit <- length(detroit)
+```
+Detroit has no information provided relating to the number of arrests over the 5 year period. It would be difficult make a prediction of the average number of arrests for the entire team as we will see later on in the analysis that the home team is an important predictor. This means that all inputs for the detroit are removed
+We can see that there are `r l.detroit` NA values in arrests variable. 
+
+**Overtime**
+The variable OT_flag which signify extra time having to be played at the end of regulation time due to the game finishing a tie is currently set up as 1 (there was overtime) and NA (indicating no overtime).  
+To make the Overtime data useful it was changed to the NA inputs to zero and the "OT" inputs to 1 to create a factor variable with 2 levels that could be used for analysis. 
+
+```{r Overtime, echo=FALSE, results = FALSE}
+NFL_data$OT_flag[is.na(NFL_data$OT_flag)] <- 0
+NFL_data$OT_flag[which(NFL_data$OT_flag == "OT")] <- 1
+
+```
+
+
+**Abbreviations**
+It is worth changing the names of the teams to make it easier to read decision trees further along the analysis, the various team names are shortened with the abbreviation function.  
+Before being shortened the names are long and rather unwieldy particularly for the decision trees plots further along.
+```{r Before Abbeviation, echo - FALSE}
+levels(as.factor(NFL_data$home_team))
+```
+
+```{r Abbreviated Names, echo=FALSE, results = TRUE}
+NFL_data$home_team <- abbreviate(NFL_data$home_team, )
+NFL_data$away_team <- abbreviate(NFL_data$away_team, )
+
+levels(as.factor(NFL_data$home_team))
+
+```
+The shortened names are 4 letter and much more manageable. 
+
+**Character vaiables**
+
+```{r Character Varibales, echo=FALSE, results = FALSE }
+apply(NFL_data, 2, class)
+```
+Looking at the data again we can see that there some variables are recorded as `characters` instead of factors which is required for the analysis.using the `lapply`function all of the charcther variables are converted to the class `Factor`.
+```{r Factors, echo=FALSE, results = FALSE}
+names <- c("season", "week_num", "day_of_week", "home_team", 
+           "away_team", "OT_flag", "division_game")
+NFL_data [names] <- lapply(NFL_data[names], factor)
+apply(NFL_data, 2, class)
+```
+**Score Difference**
+To explore the features further I decided to try decipher some more variables score difference was the main one. I was hoping to see if there was any relationship between a close game and rising arrest rates. As tight game comes to an end I would imagine that tempers flare under such citcumstances. 
+
+```{r Score Differencr, echo=FALSE, results = FALSE}
+
+score_diff <- c(NFL_data$home_score - NFL_data$away_score)
+
+NFL_data$score_diff <- score_diff
+```
+
+**Outliers**
+The arrests data has a huge right skew to it with a very long tail. Looking at, it has the appearance of a Poisson distribution to it but when a test of the distribution is carried out the results say that because of the long tail it is unlikely that the distibution fits a Poisson model. It is important to note that the distribution is not Gaussian either. 
+
+```{r Arrests plot, echo=FALSE}
+ggplot(NFL_data, aes(x = arrests)) + 
+  geom_density(alpha = .7, fill = "pink", color = "red") + 
+  labs(title= "Fig. 2.1. Frequency of arrests/game",
+       x = "Arrests/Game",
+       y = "Proportion (%)"
+       ) +
+  theme_minimal()
+```
+```{r dispersion test, echo = FALSE}
+dispersion_test <- function(x) 
+{
+  res <- 1-2 * abs((1 - pchisq((sum((x - mean(x))^2)/mean(x)), length(x) - 1))-0.5)
+  
+  cat("Dispersion test of count data:\n",
+      length(x), " data points.\n",
+      "Mean: ",round(mean(x), 2),"\n",
+      "Variance: ",round(var(x), 2),"\n",
+      "Probability of being drawn from Poisson distribution: ", 
+      round(res, 3),"\n", sep = "")
+  
+  invisible(res)
+}
+
+dispersion_test(NFL_data$arrests)
+```
+
+```{r QQ plot, include = FALSE}
+qqPlot(x = NFL_data$arrests, 
+       distribution = "norm")
+
+```
+It was tempting to remove the top one percent of the variables as outliers but on further inspection 5 out of the top 10 points are from the same team (San Diego Chargers), removing some of these may adversely affect the quality of the model. For this analysis no actions being taken as regards to removing outliers.  
+
+```{r, echo=FALSE, results = TRUE}
+outliers <- NFL_data[with(NFL_data, order(-arrests)), ]
+outliers[1:10, 5]
+```
+
+### 2.0 Exploratory Data Analysis
+ 
+
+```{r mean arrests, echo=FALSE, results = FALSE}
+# Calculating the mean number of arrests by home team and away team. 
+par(mfrow = c(2,1))
+par(mfrow=c(1,2))
+
+
+mean<-aggregate(NFL_data$arrests, by = list(home_team = NFL_data$home_team), 
+                FUN = mean)
+
+away_mean<-aggregate(NFL_data$arrests, by = list(away_team = NFL_data$away_team), 
+                FUN = mean)          
+```
+
+
+```{r Home Team plot, echo=FALSE, fig.width=12, fig.height=8}
+ggplot(mean, aes(x = reorder(home_team, x), x)) +
+  geom_bar(aes(fill = x), stat = "identity") +
+  scale_fill_gradient(low = "blue", high = "red", ) +
+  labs(title = "Mean number of arrests per game by team: Home", 
+       x = "Home Team",
+       y = "Number of Arrest/Game") +
+  theme(legend.title = element_blank())+
+  theme_minimal()
+```
+Fig. 2.2. is a bar chart displaying the average number of people arrested at each game according to the home team. The left skew may be an indicator that certain team fanbases are prone to higher rate of arrests or that their security is stricter(fantastic) or could be a reflection of differing levels of reporting or what qualifies as an arrest at the stadiums(does an arrest in the parking lot qualify).  For the purposes of this analysis we will work under the assumption that the former(some fanbases are rowdier than others).
+
+```{r Away Team plot, echo=FALSE, fig.width=12, fig.height=8}
+ggplot(away_mean, aes(x = reorder(away_team, x), x)) +
+  geom_bar(aes(fill = x), stat = "identity") +
+  scale_fill_gradient(low = "blue", high = "red", ) +
+  labs(title = "Mean number of arrests per game by team: Away", 
+       x = "Away Team",
+       y = "Number of Arrest/Game") +
+  theme(legend.title = element_blank())
+```
+
+Fig. 2.3. Has an appears almost linear appearance, however the teams that had a higher mean arrest rate do not appear in to be as high in this list. It could be argues that this is evidence that this may be due to security being much strict at certain stadiums as if the were all equal one would assume that the travels support would have similarly high arrests at away games. 
+
+```{r Score Difference plot, echo=FALSE}
+ggplot(NFL_data, aes(score_diff, arrests, group = division_game, shape = division_game, colour = division_game)) + 
+  geom_jitter() +
+  labs(title = "Score differences and Division games impact on arrests", 
+       x = "Score Differential",
+       y = "Number of Arrests") + 
+  scale_colour_manual(name = "Division\n Game",
+                      breaks = c("n", "y"),
+                      labels = c("no", "yes"),
+                      values = c("red", "blue")) +
+  scale_shape_discrete(name = "Division\n Game",
+                       breaks = c("n", "y"),
+                       labels = c("no", "yes")) 
+```
+
+Fig. 2.4. The scatter plot appears as if there may be a rise in the number of arrests at games 
+when it finishes with a closer score. 
+
+```{r Gameday Plot, echo=FALSE}
+
+ggplot(NFL_data, aes(day_of_week, arrests, group = OT_flag, fill= OT_flag, shape = OT_flag)) +
+  geom_col() + 
+  labs(title = "Sum of arrests according to each day", 
+       x = "Day of Games", 
+       y = "Number of Arrests") +
+  scale_fill_manual(name = "Overtime\n Flag", 
+                        breaks = c("0", "1"),
+                        labels = c("no", "yes"),
+                    values = c("red", "blue")) 
+```
+
+```{r Overtime Rate, include = FALSE}
+OT_games <- sum(as.numeric(NFL_data$OT_flag))
+OT_rate <- round((OT_games - length(NFL_data$OT_flag))/length(NFL_data$OT_flag), 3)
+
+OT_rate <- OT_rate * 100
+```
+
+Fig. 2.5. There isn't much to take away from Fig. 5. other than very few NFL games occur on a Saturday or a Wednesday and the vast majority of them occuring on a Sunday. We can see that the number of games that require over time is small (`r OT_rate`%) This graph also gives some insight into the impact the days have on the NFL_data namely that very few games are played on Saturdays and Wednesday.  
+```{r Gametime bins, echo=FALSE}
+breaks <- c(0, 0.53, 0.6, 0.63, 0.7, 0.73, 0.8, 0.83, 0.9)
+
+tags <- c("17:00", "17:30", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30")
+
+group_tags <- cut(NFL_data$gametime_local, breaks = breaks, 
+                  include.lowest = TRUE, 
+                  right = FALSE, 
+                  labels = tags)
+sum <- summary(group_tags)
+
+
+gametime <- factor(group_tags, levels = tags, ordered = FALSE)
+
+
+NFL_data$gametime <- gametime
+
+mean.g<-aggregate(NFL_data$arrests, by = list(gametime = NFL_data$gametime), 
+                FUN = mean)
+```
+
+
+Fig. 2.6. Plots the mean number of arrests per game over the 5 years of reporting. It also indicates the number of kickoffs at this time. 
+```{r Mean Gametime plot, echo=FALSE}
+ggplot(mean.g, aes(gametime, x)) +
+  geom_bar(aes(fill = x), stat = "identity") +
+  scale_fill_gradient(low = "blue", high = "red", ) +
+  labs(title = "Mean number of arrests of game time(Number of Kickoffs at this time)", 
+       x = "Start Time(24 hr)",
+       y = "Number of Arrest/Game") +
+  theme(legend.title = element_blank()) + 
+  geom_text(
+    aes(label = sum),
+    position = position_dodge(0.9), 
+    vjust = 0
+    )
+```
