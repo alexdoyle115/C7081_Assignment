@@ -1,0 +1,900 @@
+---
+title: "Assignment"
+author: "Alex Doyle"
+date: "11/20/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+# Predicting Arrest numbers at NFL stadiums
+## Table of contents 
+
+1. Background 
+ 
+  - 1.1 Introduction
+  
+2. Methods  
+ 
+  - 2.1 Feature Data clenseng
+ 
+  - 2.2 Model Selection
+ 
+  - 2.3 Ridge Regression
+ 
+  - 2.4 The Lasso
+ 
+  - 2.5 Principle Component Regression
+ 
+  - 2.6 Decision Trees
+ 
+  - 2.7 Generalized Linear Model 
+
+3. Results   
+ 
+  - 3.1 Key Factors
+ 
+  - 3.2 Predictions 
+
+4. Conclusion  
+
+5. Literature cited  
+
+\newpage
+
+## 1.0 Background 
+
+### 1.1 Introduction 
+For this analysis the brief set out was to analyze a real data and ask some interesting questions relating to the data. After searching through various websites this data set jumped out. It is a record of the number of people arrested at National Football League games starting in 2011 up until the 2015 season. Also included are 11 other factors such as the home score such as the visiting team, scores for both teams, the time the game was played etc.   
+
+  * It is interesting and unique.  
+  * Although the data is a number of years old there has not been an in depth  extraction of the data to answer any questions other than "What city had the most arrests over this period of time?"
+
+From these records I hope to be able to explain what factors have the biggest impact on the number of data. Is it the case that some NFL fanbases are are more prone to cause trouble, or is it the case the intense pressure of close game results in a spike in the numbers. Meaning I aim to identify what factors lead to data at games, are these the factors that will be used in the prediction model to accurately predict the number of people arrested at a given game.  Personally I expect to see the a rise in the number of people arrested at close games but I do not believe there will be a massive difference across teams as surely higher arrests leads to a reactive security surge. 
+
+```{r libraries, include = FALSE, }
+library(car)      # For correlation
+library(dplyr)    # For data transformation
+library(gbm)      # For boosting
+library(GGally)   # For decision trees
+library(ggplot2)  # For plotting
+library(ggcorrplot) # Fro correlation plot
+library(glmnet)   # For GLM
+library(kableExtra) # For data dictionary
+library(leaps)    # For subsets
+library(MASS)     # For glm
+library(openxlsx) # For reading in Data
+library(pls)          # For PCR
+library(randomForest) # For Random Forest
+library(rpart.plot)   # For viewing decision tree
+library(tidyverse)    # 
+library(tree)         # For making decision tree
+```
+
+```{r, include = FALSE}
+setwd("C:/Users/alexd/Desktop/C7801_Assignment")
+NFL_data <- read.xlsx("arrests_book.xlsx")
+```
+```{r, echo = FALSE}
+getwd()
+```
+
+
+```{r, echo = FALSE, fig.cap = "Data Dictionary"}
+var_description <- c("year of data recorded 2011 - 2015", "week of game 1 – 17", "day game was
+                     played",
+                     "time of game(loacl timezone", "Home team", "Away team", "Score of home team",
+                     "Score of away team", "indicator of extra time played at the end of the game if
+                     game is tied at the end of regulation time", "number of people arrested", 
+                     "game between two teams in the same division (32 teams divided between 8 
+                     divisions")
+
+var_type <- c("Factor", "Factor", "Factor","Factor","Factor","Factor", "Numeric","Numeric",
+              "Factor", "Numeric","Factor")
+
+names <- names(NFL_data)
+df <- data.frame(names, var_type, var_description)
+```
+\newpage
+```{r print data dictioanry, echo=FALSE}
+kable(df, format = "markdown")
+
+```
+
+From the first couple rows of data we can get a sense of the variables. We can see that there are 1006 observations of 11 variables. At a glance there are also a number of teams that didn't release any information about how many arrests occurred. These teams were Cleveland, New Orleans, Buffalo, Miami and Oakland. 
+
+
+\newpage
+## 2.0 Method 
+
+### 2.1 Feature Data clenseing  
+From reading the original README from kaggle as mentioned above it does not include numbers from various team but there is are also varibales that require editing. 
+
+**Detroit**
+```{r detroit, echo=FALSE, results = FALSE}
+which(is.na(NFL_data$arrests) == TRUE)
+detroit <- which(is.na(NFL_data$arrests) == TRUE)
+NFL_data <- NFL_data[-c(detroit),]
+```
+```{r, include = FALSE}
+l.detroit <- length(detroit)
+```
+Detroit has no information provided relating to the number of arrests over the 5 year period. It would be difficult make a prediction of the average number of arrests for the entire team as we will see later on in the analysis that the home team is an important predictor. This means that all inputs for the detroit are removed
+We can see that there are `r l.detroit` NA values in arrests variable. 
+
+**Overtime**
+The variable OT_flag which signify extra time having to be played at the end of regulation time due to the game finishing a tie is currently set up as 1 (there was overtime) and NA (indicating no overtime).  
+To make the Overtime data useful it was changed to the NA inputs to zero and the "OT" inputs to 1 to create a factor variable with 2 levels that could be used for analysis. 
+
+```{r Overtime, echo=FALSE, results = FALSE}
+NFL_data$OT_flag[is.na(NFL_data$OT_flag)] <- 0
+NFL_data$OT_flag[which(NFL_data$OT_flag == "OT")] <- 1
+
+```
+
+
+**Abbreviations**
+It is worth changing the names of the teams to make it easier to read decision trees further along the analysis, the various team names are shortened with the abbreviation function.  
+Before being shortened the names are long and rather unwieldy particularly for the decision trees plots further along.
+```{r Before Abbeviation, echo = FALSE}
+levels(as.factor(NFL_data$home_team))
+```
+
+```{r Abbreviated Names, echo=FALSE, results = TRUE}
+NFL_data$home_team <- abbreviate(NFL_data$home_team, )
+NFL_data$away_team <- abbreviate(NFL_data$away_team, )
+
+levels(as.factor(NFL_data$home_team))
+
+```
+The shortened names are 4 letter and much more manageable. 
+
+**Character vaiables**
+
+```{r Character Varibales, echo=FALSE, results = FALSE }
+apply(NFL_data, 2, class)
+```
+Looking at the data again we can see that there some variables are recorded as `characters` instead of factors which is required for the analysis.using the `lapply`function all of the charcther variables are converted to the class `Factor`.
+```{r Factors, echo=FALSE, results = FALSE}
+names <- c("season", "week_num", "day_of_week", "home_team", 
+           "away_team", "OT_flag", "division_game")
+NFL_data [names] <- lapply(NFL_data[names], factor)
+apply(NFL_data, 2, class)
+```
+\newpage
+**Score Difference**
+To explore the features further I decided to try decipher some more variables score difference was the main one. I was hoping to see if there was any relationship between a close game and rising arrest rates. As tight game comes to an end I would imagine that tempers flare under such citcumstances. 
+
+```{r Score Differencr, echo=FALSE, results = FALSE}
+
+score_diff <- c(NFL_data$home_score - NFL_data$away_score)
+
+NFL_data$score_diff <- score_diff
+```
+
+**Outliers**
+The arrests data has a huge right skew to it with a very long tail. Looking at, it has the appearance of a Poisson distribution to it but when a test of the distribution is carried out the results say that because of the long tail it is unlikely that the distibution fits a Poisson model. It is important to note that the distribution is not Gaussian either. 
+
+```{r Arrests plot, echo=FALSE, fig.cap="Fig. 2.1. Frequency of arrests/game"}
+ggplot(NFL_data, aes(x = arrests)) + 
+  geom_density(alpha = .7, fill = "pink", color = "red") + 
+  labs(x = "Arrests/Game",
+       y = "Proportion (%)"
+       ) +
+  theme_minimal()
+```
+```{r dispersion test, echo = FALSE}
+dispersion_test <- function(x) 
+{
+  res <- 1-2 * abs((1 - pchisq((sum((x - mean(x))^2)/mean(x)), length(x) - 1))-0.5)
+  
+  cat("Dispersion test of count data:\n",
+      length(x), " data points.\n",
+      "Mean: ",round(mean(x), 2),"\n",
+      "Variance: ",round(var(x), 2),"\n",
+      "Probability of being drawn from Poisson distribution: ", 
+      round(res, 3),"\n", sep = "")
+  
+  invisible(res)
+}
+
+dispersion_test(NFL_data$arrests)
+```
+
+```{r QQ plot, include = FALSE}
+qqPlot(x = NFL_data$arrests, 
+       distribution = "norm")
+
+```
+It was tempting to remove the top one percent of the variables as outliers but on further inspection 5 out of the top 10 points are from the same team (San Diego Chargers), removing some of these may adversely affect the quality of the model. For this analysis no actions being taken as regards to removing outliers.  
+
+```{r, echo=FALSE, results = TRUE}
+outliers <- NFL_data[with(NFL_data, order(-arrests)), ]
+outliers[1:10, 5]
+```
+
+### 2.2 Model Selection
+Looking at the some of the graphs does offer some insight into what factors may be important or at the very least rule out the impact a variable such as `OT_flag` have. While these graphs do offer some insight and are interesting they do little to give quantifiable proof of the important factors. Model selection can be used to create prediction models as well as identify the important predictors. 
+
+Due to the score difference variable being created from the 2 other numeric variables it creates an error when running these functions so it is removed for until the decision tree methods. 
+
+
+The data is divided randomly into 2 sets; the training set(80%) and a test set(20%). The training set will be used to create the models and the test set then can be used to test the quality of the fit of the model. It will produce the test set error. 
+
+```{r Test set, echo=FALSE}
+smp_size <- floor(0.8 * nrow(NFL_data))
+set.seed(123)
+train_ind <- sample(seq_len(nrow(NFL_data)), size = smp_size)
+data_train <- NFL_data[train_ind, ]
+data_test <- NFL_data[-train_ind, ]
+
+# Training sample size
+dim(data_train)
+# Test sample size 
+dim(data_test)
+```
+
+```{r Remove score difference, echo=FALSE}
+NFL_data <- NFL_data[-c(12)]
+```
+
+
+**2.3.1 Subset Selection**
+
+```{r Best subset, echo=FALSE, cache=TRUE}
+# Best subset selection on the arrests data
+regfit.full <- regsubsets(arrests ~., NFL_data, really.big = T)
+reg.summary1 <- summary(regfit.full)
+```
+
+```{r Forward subset, echo=FALSE}
+# Forward stepwise selection 
+regfit.fwd <- regsubsets(arrests ~. ,NFL_data, method = "forward" )
+reg.summary2 <- summary(regfit.fwd)
+```
+
+```{r Backward subset, echo=FALSE}
+# Backwards stepwise selection 
+regfit.bkwd <- regsubsets(arrests ~. , NFL_data, method = "backward" )
+reg.summary3 <- summary(regfit.bkwd)
+```
+
+```{r R^2, include = FALSE}
+reg.summary1$rsq
+reg.summary2$rsq
+reg.summary3$rsq
+
+summary(regfit.fwd)
+```
+
+The 3 main methods of the subset selection are 
+
+**Best Subset Selection:** where all combinations of of each number of predictors are used.
+
+**Forward Stepwise Selection** where starting at 0 predictors, the predoictor with the most additional improvement is added up until all predictors are included. 
+
+**Backwards Stepwise Selection** opposite to forward stepwise it starts with all predictors and removes the least useful each time. 
+
+The motivation for using stepwise selection is that while it doesn't compared every possible model which can be huge $2^n$ for $n$ predictors. 
+Looking at Fig. 2.2. which plots the Adjusted $R^{2}$ (the percentage of the response variable that is explained by the model) to the number of variables of the model all 3 models use the same predictors to create in the models with 8 identical predictor. Due to the number of factor variables creates a huge number of dummy variables makes it difficult to decipher the key factors but does show what dummy variables are important. 
+
+
+```{r R^2 Plot, echo=FALSE, fig.cap="Fig. 2.2. "}
+par(mfrow = c(1, 3))
+plot(reg.summary1$adjr2, xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l", main = "Best Subset Selection")
+
+plot(reg.summary2$adjr2, main = "Forward Stepwise Selection", xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+
+plot(reg.summary3$adjr2, main = "Backwards Stepwise Selection", xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+```
+
+Using the `coef` function it identifies the coefficient for the model, looking at the model with 8 variables as it has the max R^2 for the forward subset selection. 
+
+```{r subset coefficient, include=FALSE}
+coef(regfit.fwd, 8, complete = TRUE)
+```
+
+
+```{r Max subset, include=FALSE}
+par(mfrow = c(1,1))
+plot(reg.summary2$adjr2, xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+which.max(reg.summary2$adjr2)
+points(8, reg.summary2$adjr2[8], col ="red", cex= 2, pch = 20)
+```
+
+
+```{r Mallows Cp, include = FALSE}
+#I could have aslo used the  Mallows Cp statistic instead, here i will use it on the backwards selection model, can see as more variables are included the smaller the Cp meaning the better the prediction of the model.
+plot(reg.summary3$cp, xlab = "Number of Variables", ylab = "Cp", type = "l")
+which.min(reg.summary3$cp)
+points(8, reg.summary3$cp[8], col = "blue", cex = 2 , pch = 20)
+```
+
+```{r Plots, include = FALSE}
+plot(regfit.fwd ,scale ="r2")
+plot(regfit.fwd ,scale ="adjr2")
+plot(regfit.fwd ,scale ="Cp")
+plot(regfit.fwd ,scale ="bic")
+```
+
+**2.3.2 The Validation Set**
+
+To compare the models that are developed, the root mean square error(RMSE) of a test set will be used as an indicator of the quality of fit of the model. Starting with the simplest, the validation set approach which will use the training and test set created earlier to build a model and the test set is used to the predict arrests which then can be compared to the actual arrests. 
+
+
+```{r Validation set, include=FALSE, warning=FALSE}
+
+
+regfit.best = regsubsets(arrests~. , data_train, method = "forward") 
+
+test.mat = model.matrix(arrests~. , data_test)
+
+val.errors = rep(NA, 8)
+for(i in 1:8) {
+  coefi =coef(regfit.best, id = i)
+  pred = test.mat[, names(coefi)]%*%coefi
+  val.errors[i] = mean((data_test$arrests - pred)^2)
+}
+
+round(val.errors, 2)
+
+which.min(val.errors)
+MSE.val <- round(val.errors[7], 2)
+RMSE.val <- sqrt(MSE.val)
+#coef(regfit.best, 7)
+```
+
+
+Using a training set and a test set to  check the predictive performance of the models with differing numbers of predictors After testing the various models we can see that the 7th model had the lowest MSE of `r MSE.val`
+
+
+```{r Function, include = FALSE}
+#Setting up this function further use
+predict.regsubsets = function(object, newdata, id, ...){
+  form = as.formula(object$call[[2]])
+  mat = model.matrix(form, newdata)
+  coefi =coef(object, id = id)
+  xvars = names(coefi)
+  mat[, xvars]%*% coefi
+}
+
+regfit.new = regsubsets(arrests~., data = NFL_data, nvmax = 13, method = "forward")
+coef(regfit.new, 7)
+```
+
+**2.3.4 k-fold Cross Validation**
+
+To try and imporve accuracy of the prediction the observations can be divided into k groups, or folds. The first fold is used to as a validation set for the remaining k - 1 folds which are used as a "training set". This preoces is repeated with a different fold used as a test set until all folds have been used. The resulting MSE is calculated using the MSE from the average of MSE_1 to MSE_k. 
+This gives an overall more accurate than the previous validation set due to the bias-variance trade off. 
+```{r K-fold, echo=FALSE, error = TRUE, warning = FALSE}
+k = 10
+set.seed(1)
+folds = sample(1:k, nrow(NFL_data), replace = TRUE)
+cv.errors = matrix(NA, k, 11, dimnames = list(NULL, paste(1:11)))
+
+for(j in 1:k){
+  best.fit = regsubsets(arrests~. , data = NFL_data[folds != j, ], 
+                        nvmax = 11, method = "forward")
+  for(i in 1:11){
+    pred = predict(best.fit, NFL_data[folds == j, ], id = i)
+    cv.errors[j, i] = mean((NFL_data$arrests[folds == j] - pred)^2)
+  }
+}
+
+mean.cv.errors = apply(cv.errors, 2, mean)
+
+MSE.cv <- mean.cv.errors[which.min(mean.cv.errors)]
+RMSE.cv <- sqrt(MSE.cv)
+par(mfrow = c(1,1))
+plot(mean.cv.errors, type = "b", 
+     main = "Cross Vallidation Error", 
+     xlab = "Number of Variables", 
+     ylab = "MSE from Cross Vallidation",
+     col = "blue")
+
+
+reg.best <- regsubsets(arrests ~. , data = NFL_data, nvmax = 12, method = "backward")
+
+```
+
+Fig. 2.3. Plots the number of varibales in the model against the average MSE, After cross validation the best model used 9 variables. All of these aside from the time of games were the dummy variables. Looking at the variables selected the majority are `home_team`variables with some `away_team`and `gametime_local`included. 
+
+```{r CV coefficents, echo = TRUE}
+coef(reg.best, 9)
+```
+### 2.3 Ridge Regression
+ 
+While similar to the least square models used previously the ridge regression it uses a shrinkage penalty to shrink coefficients towards zero, this shrinkage coefficient is set by the tuning parameter ($\lambda$) for the best accuracy. 
+The observations again have to be split up into the training set and test set but in the form of a matrix for the ridge regression to be carried out. A large $\lambda$ creates a penalty with a large effect and small $\lambda$ creates a small shrinkage penalty. 
+
+```{r Ridge regression, include=FALSE}
+x = model.matrix(arrests ~., NFL_data)[, -1]
+y = NFL_data$arrests
+
+
+grid = 10^seq(10, -2, length = 100)
+ridge.mod <- glmnet(x, y, family = c("poisson"),  alpha =0, lambda = grid, standardize = TRUE)
+
+dim(coef(ridge.mod))
+```
+
+```{r large lambda, include=FALSE}
+#large lambda
+ridge.mod$lambda[50]
+#coef(ridge.mod)[, 50]
+sqrt(sum(coef(ridge.mod)[-1, 50] ^2))
+
+```
+
+```{r small lambda, include=FALSE}
+#small lambda
+ridge.mod$lambda[60]
+#coef(ridge.mod)[,60]
+sqrt(sum(coef(ridge.mod)[-1, 60] ^2))
+```
+
+```{r rr test set, include=FALSE}
+set.seed(1)
+train = sample(1:nrow(x), nrow(x)/2)
+test = (-train)
+y.test = y[test]
+
+ridge.mod1 = glmnet(x[train, ], y[train], alpha = 0, lambda = grid, standardize = TRUE,
+                    thresh = 1e-12)
+ridge.pred = predict(ridge.mod1, s = 4, newx = x[test, ])
+mean.rr <- mean((ridge.pred - y.test)^2)
+```
+
+```{r just the intercept, include=FALSE}
+intercept <- mean((mean(y[train]) - y.test)^2)
+
+```
+
+```{r rr test model, include=FALSE}
+ridge.pred1 <- predict.glmnet(ridge.mod1, s = 0, newx = x[test,])
+mean((ridge.pred1 - y.test)^2)
+MSE.rr <-mean((ridge.pred1 - y.test)^2) 
+MSE.rr <- round(MSE.rr, 2)
+RMSE.rr <- (sqrt(MSE.rr))
+```
+
+A grid of 100 values ranging from -2 to 10 is created this will test model with 100 different $\lambda$ and give the MSE for 100 different models enabling us to circle in on the best $\lambda$ for the model. If we set the model up from just the intercept, the MSE would be {r intercept}, where as the average across all $\lambda$ was {r mean.rr}. Fig. 7. graphs the log of $\lambda$ on the x-axis with the resulting MSE on the y-axis. 
+
+
+
+```{r Best Lambda plot, echo=FALSE }
+set.seed(1)
+cv.out = cv.glmnet(x[train,], y[train], alpha = 0)
+par(mfrow = c(1,1))
+plot(cv.out )
+```
+```{r Best lamda figure, include = FALSE}
+bestlam = cv.out$lambda.min
+bestlam <-round(bestlam, 2)
+```
+Fig. 2.4 Is a plot of the MSE at the different tuning parameter($\lambda$) for this model it decreased with a smaller $\lambda$ with the best being achieved at `r bestlam`.
+
+
+
+```{r, include=FALSE }
+ridge.pred = predict(ridge.mod, s = bestlam, newx = x[test, ])
+mean((ridge.pred - y.test)^2)
+
+out = glmnet(x, y, alpha = 0)
+predict(out, type = "coefficients", s = bestlam)[1:20,]
+```
+
+```{r the lasso, echo=FALSE }
+lasso.mod = glmnet(x[train,], y [train], alpha = 1, lambda = grid)
+plot(lasso.mod,
+     xvar='lambda')
+```
+
+Fig.2.5. Each line in the plot is a predictor in the model as it approaches 0
+
+
+```{r, include = FALSE}
+set.seed(1)
+cv.out = cv.glmnet(x[train, ], y[train], alpha = 1)
+plot(cv.out)
+bestlam =cv.out$lambda.min
+lasso.pred = predict(lasso.mod, s = bestlam, newx = x[test, ])
+MSE.lasso <- mean((lasso.pred - y.test)^2)
+MSE.lasso <- round(MSE.lasso, 2)
+RMSE.lasso <- sqrt(MSE.lasso)
+
+```
+### 2.4 The Lasso  
+
+The lasso method improves on ridge regression by shrinking coefficient estimators to 0 compared to ridge regression which will have all predictors included. That is still higher than the MSE from the ridge regression model, but it is still smaller than the null model
+
+```{r, include = FALSE}
+out = glmnet(x, y, alpha = 1, lambda = grid)
+lasso.coef = predict(out, type = "coefficients", s = bestlam) [1:20,]
+lasso.coef[lasso.coef != 0]
+```
+
+
+### 2.5 Principal Component Regression 
+Due to the majority of the variables in the `NFL_data`are factors not numeric it caused the PCR to not work well 
+
+```{r PCR, include = FALSE}
+set.seed(2)
+pcr.fit = pcr(arrests ~. , data = NFL_data, subset = train, scale = FALSE, validation = "CV")
+
+
+summary(pcr.fit)
+validationplot(pcr.fit, val.type = "MSEP")
+
+which.min(pcr.fit$MSEP)
+```
+
+
+
+### 2.6 Decision Tree
+
+Stepping away from the linear models and using a decision tree to approach the prediction problem. "Decision trees consist of a series of splitting rules that segments the predictors in $n$ regions" (James, G. *et al*, 2013).  "Regression tree leaves contain constant values as predictions for the class value"(Richardson, B. *et al*, 2017). Decision trees can be easily interpreted which is a massive advantage but decision trees can be thought of as a black box (Breiman, 2002) meaning the between the input and the output there it can be hard to interpret what is variables are important.
+
+The variable for score difference can be reintroduced as it can not cause a linear discrepancy in a decision tree. While adding another does not allow for a direct comparison of the tree based methods to linear models, it may offer superior prediction which is more important for this analysis. 
+
+**2.7.1 Decision tree**
+
+```{r Adding back score_diff, include = FALSE}
+NFL_data$score_diff <- score_diff
+
+smp_size <- floor(0.8 * nrow(NFL_data))
+set.seed(123)
+train_ind <- sample(seq_len(nrow(NFL_data)), size = smp_size)
+data_train <- NFL_data[train_ind, ]
+data_test <- NFL_data[-train_ind, ]
+
+# Training sample size
+dim(data_train)
+# Test sample size 
+dim(data_test)
+```
+
+
+```{r Decision tree, echo=FALSE}
+par(mfrow = c(1,1))
+set.seed(1)
+train = sample(1:nrow(NFL_data), nrow(NFL_data)/2)
+tree.arrests = tree(arrests ~. , NFL_data, subset = train)
+summary(tree.arrests)
+```
+\newpage
+.   
+
+
+```{r rpart decision tree plot, echo=FALSE, fig.cap="Fig. 2.6 Is a single decison tree using 5 different variables in the prediction resulting in 11 terminal nodes. The inputs shift left or right depending on a boolean output", fig.width=12, fig.height=8}
+mytree <- rpart(
+  arrests ~.,  
+  data = data_train, 
+  method = "poisson"
+)
+
+par (mfrow = c(1,1))
+rpart.plot(x = mytree, type = 1, tweak = 1.5)
+```
+
+```{r Cross Validated decision tree, include=FALSE}
+cv.arrests = cv.tree(tree.arrests)
+plot(cv.arrests$size, cv.arrests$dev, type = "b")
+
+
+prune.arrests = prune.tree(tree.arrests, best = 5)
+plot(prune.arrests)
+text(prune.arrests, pretty = 0)
+```
+
+
+```{r decision tree MSE, echo=FALSE}
+yhat = predict(tree.arrests, newdata = data_test)
+arrests.test = data_test$arrests
+
+MSE.dt<- mean((yhat - arrests.test)^2)
+MSE.dt <- round(MSE.dt, 2)
+RMSE.dt <- sqrt(MSE.dt)
+```
+
+**2.7.2 Bagging, Random Forest and Boosting**
+
+There are a number of methods to try and improve the accuracy of the decision trees through methods like
+
+**Bagging:** This involved creating a distinct data set by sampling the original multiple times repplacing values. These data sets are used to create prediction models and these models are averaged to decrease the varience. 
+
+**Random Forest:** Works by only allowing a subset of predictors to create a decision tree over multiple(500) trees. This decorrelates the tree and makes the average of the resultuing trees less variable. 
+
+**Boosting:** Builds on the bagging method by growing trees sequentially using information from the previous trees 
+
+\newpage
+```{r Bagging tree, include=FALSE, cache=TRUE}
+set.seed(1)
+bag.arrests = randomForest(arrests~. , data_train, 
+                           mtry = 4, ntree = 500, importance=TRUE)
+bag.arrests
+
+yhat.bag = predict(bag.arrests, newdata = data_test)
+```
+
+```{r Bagging MSE, echo=FALSE, warning = FALSE}
+MSE.bagging <- mean((yhat - arrests.test)^2)
+MSE.bagging <- round(MSE.bagging, 2)
+RMSE.bagging <- sqrt(MSE.bagging)
+
+# RNGkind(sample.kind = "Rounding")
+```
+
+```{r Random Forest, echo=FALSE, fig.dim = c(5, 4)}
+set.seed(1)
+rf.arrests = randomForest(arrests~. , data_train, 
+                          mtry = 6, importance=TRUE)
+
+
+yhat.rf = predict(rf.arrests, newdata = data_test)
+
+plot(yhat.rf, arrests.test, 
+     xlab = "predicted arrests",
+     ylab = "actual arrests",
+     col = "blue")
+abline(0, 1, lty = 2, col = "red")
+```
+
+Fig. 2.7 is a a plot of the predicted number of arrests from a `Random Forest` on the x axis and the actual number of arrests on the y axis, the dashed line would be the correct prediction. 
+
+```{r Random forest MSE, echo=FALSE}
+MSE.rf <- mean((yhat.rf - arrests.test)^2)
+MSE.rf <- round(MSE.rf, 2)
+RMSE.rf <- sqrt(MSE.rf)
+```
+
+```{r Boosting, echo=FALSE}
+set.seed(1)
+boost.arrest = gbm(arrests ~. , data = data_train, distribution = 
+                     "poisson", n.trees = 5000, interaction.depth = 4)
+# summary(boost.arrest)
+
+# plot(boost.arrest, i = "home_team")
+# plot(boost.arrest, i = "score_diff")
+
+
+yhat.boost = predict(boost.arrest, newdata = data_test,
+                     n.trees = 5000)
+```
+
+```{r Boosted MSE, echo=FALSE}
+MSE.boost<- mean((yhat.boost - arrests.test)^2)
+MSE.boost <- round(MSE.boost, 2)
+RMSE.boost <- sqrt(MSE.boost)
+```
+Fig. 2.8 Importance of each variable in the Random Froest(n=500)
+```{r Importance variables, echo=FALSE, fig.dim = c(7, 4)}
+
+varImpPlot(rf.arrests, main = " ")
+```
+
+\newpage
+
+### 2.7 Generalized Linear Models
+
+Generalized Liner Models (GLMs) are a large class of statistical models that consist of three components 
+
+* A random component specifying the distribution of the response variable 
+
+* A linear predictor
+
+* A link function 
+
+With these components GLMs attempt to accomodate a range of distribution types (Gaussian, Poisson etc.)(Venables *et al*, 2004). This is useful for this analysis as the arrests variable appears to have a poisson distrubtion or quasi-poisson, which we can include in the model. 
+
+Four different models are created to incorporate the factors that have consistently been included in models for both model selection and the decision tree methods. The root meean square error is calculated on each of the models to compare to previous models. 
+
+**GLM 1:** poisson distribtion with all variables
+
+**GLM 2:** poisson distribution with the top 4 predictors from decision tree
+
+**GLM 3:** quasipoisson distrubtion  with the top 4 predictors from the decision tree
+
+**GLM 4:** gaussian distribution with the top 4 predictors from decision tree
+
+It is imporatant to note that 3 of the 4 predictors were consistanly in the model selection methods 
+
+```{r GLM 1, echo=FALSE, warning = FALSE}
+glm.fit1 = glm(arrests~. - season , family = poisson(link = "log"), data = data_train)
+
+glm.probs1 = predict.glm(glm.fit1, data_test, type = "response")
+MSE.lm1 <- sum((glm.probs1 - data_test$arrests)^2 / nrow(data_test))
+MSE.lm1 <-round(MSE.lm1, 2)
+RMSE.lm1 <- sqrt(MSE.lm1)
+```
+
+```{r, GLM 2, echo=FALSE}
+glm.fit2 = glm(arrests~ gametime_local + home_team + away_team  , family = poisson(link = "log"), data = data_train)
+glm.probs2 = predict.glm(glm.fit2, data_test, type = "response")
+MSE.lm2 <- sum((glm.probs2 - data_test$arrests)^2 / nrow(data_test))
+MSE.lm2 <-round(MSE.lm2, 2)
+
+RMSE.lm2 <- sqrt(MSE.lm2)
+```
+
+```{r GLM 3, echo=FALSE}
+glm.fit3 = glm(arrests~ gametime_local + home_team + away_team , family = quasipoisson(link = "log"), data = data_train)
+glm.probs3 = predict.glm(glm.fit3, data_test, type = "response")
+MSE.lm3 <- sum((glm.probs3 - data_test$arrests)^2 / nrow(data_test))
+MSE.lm3 <-round(MSE.lm3, 2)
+
+RMSE.lm3 <- sqrt(MSE.lm3)
+```
+
+```{r GLM 4, echo=FALSE}
+glm.fit4 = glm(arrests~ gametime_local + home_team + away_team, family = gaussian(link = "identity"), data_train)
+glm.probs4 = predict.glm(glm.fit4, data_test, type = "response")
+MSE.lm4 <- sum((glm.probs4 - data_test$arrests)^2 / nrow(data_test))
+MSE.lm4 <-round(MSE.lm4, 2)
+
+RMSE.lm4 <- sqrt(MSE.lm4)
+```
+
+\newpage
+## 3.0 Results
+
+Looking back to the main objectives starting out this analysis the 2 main aims were to
+
+1. Identify the factors that have the biggest impact on the nunmber of people arrested at an NFL game
+
+2. Create a model that can predict the number of people arrested at an NFL game. 
+
+After applying a number of methods to the data along with a exploration into the data which can be found here **Github**.
+
+### 3.1 Key factors
+
+````{r, echo = FALSE, fig.cap = "Fig. 3.1 Correlation plot"}
+NFL_data <- NFL_data[-c(12)]
+numeric <-select_if(NFL_data, is.numeric )
+M <- cor(numeric)
+M <- round(M, 2)
+ggcorrplot(M, hc.order = TRUE, type = "lower",
+     outline.col = "white")
+``` 
+
+The methods used in this analysis are to create prediction models but the coefficients offer insight into what variables are heavily weighted. Looking at Fig. 3.1 it highlights that there is little correlation between the number of arrests and the other numeric variables. In this analysis there are 2 methods that can be used for selecting the main variables for importance are the model selection and the decision tree. Using model selection to pick out the important variables was problematic as mentioned due to the creating of dummy variables. Linear regression creates dummy variables to incorporate qualitative variables into to model. This method works well for small numbers of predictors but as in this case with 25 predictors for the `home_team` column it create a lot of dummy models which is difficult to decipher.  However it does indicate the important teams and when the dummy variables are from the same predictor it does offer some insight.  
+
+The decision tree method for selecting variables has drawbacks also. Methods like `Random Forest` do not try to connect predictions to the attributes and even removing important predictors can have little impact on a models prediction accuracy (Efron, 2020). 
+
+Despite this there is a consistency across all of the methods. We can see from the dummy variables from subset selection that the `home_team`variable is very important for prediction but there is not much else that can be explained. In Fig. 2.11 it indicates the impact of each predictor on the Mean Square Error across the 500 iteration of the `Random Forest`, overall the this model accounts for 61% of the variance. Comparing this to Fig. 2.2. we see that the R^2 is just above 60% also. As we mentioned that these graphs are not a fool proof indicator but for the small number of predictors in this model and it being backed up by the GLM model for prediction the main predictors are
+
+
+```{r mean arrests, echo=FALSE, results = FALSE}
+# Calculating the mean number of arrests by home team and away team. 
+par(mfrow = c(2,1))
+par(mfrow=c(1,2))
+
+
+mean<-aggregate(NFL_data$arrests, by = list(home_team = NFL_data$home_team), 
+                FUN = mean)
+
+away_mean<-aggregate(NFL_data$arrests, by = list(away_team = NFL_data$away_team), 
+                FUN = mean)          
+```
+
+```{r Home Team plot, echo=FALSE, fig.width=12, fig.height=8}
+ggplot(mean, aes(x = reorder(home_team, x), x)) +
+  geom_bar(aes(fill = x), stat = "identity") +
+  scale_fill_gradient(low = "blue", high = "red", ) +
+  labs(title = "Mean number of arrests per game by team: Home", 
+       x = "Home Team",
+       y = "Number of Arrest/Game") +
+  theme(legend.title = element_blank())+
+  theme_minimal()
+```
+
+Fig. 3.2. Does show there is some variance across team when it comes to the number of arrests again wheater that due over zealous security or rowdy supporters can not be deciphered but it is the strongest predictor. 
+
+
+ 
+```{r Gametime bins, echo=FALSE}
+breaks <- c(0, 0.53, 0.6, 0.63, 0.7, 0.73, 0.8, 0.83, 0.9)
+
+tags <- c("17:00", "17:30", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30")
+
+group_tags <- cut(NFL_data$gametime_local, breaks = breaks, 
+                  include.lowest = TRUE, 
+                  right = FALSE, 
+                  labels = tags)
+sum <- summary(group_tags)
+
+
+gametime <- factor(group_tags, levels = tags, ordered = FALSE)
+
+
+NFL_data$gametime <- gametime
+
+mean.g<-aggregate(NFL_data$arrests, by = list(gametime = NFL_data$gametime), 
+                FUN = mean)
+
+```
+
+
+
+```{r Mean Gametime plot, echo=FALSE, fig.cap = "Fig. 3.3 Mean number of arrests of game time(Number of Kickoffs at this time)."}
+ggplot(mean.g, aes(gametime, x)) +
+  geom_bar(aes(fill = x), stat = "identity") +
+  scale_fill_gradient(low = "blue", high = "red", ) +
+  labs(x = "Start Time(24 hr)",
+       y = "Number of Arrest/Game") +
+  theme(legend.title = element_blank()) + 
+  geom_text(
+    aes(label = sum),
+    position = position_dodge(0.9), 
+    vjust = 0
+  )
+```
+
+
+
+
+```{r Away Team plot, echo=FALSE, fig.width=12, fig.height=8, fig.cap = "Fig. 3.4.Relationship between away teams and arrests"}
+ggplot(away_mean, aes(x = reorder(away_team, x), x)) +
+  geom_bar(aes(fill = x), stat = "identity") +
+  scale_fill_gradient(low = "blue", high = "red", ) +
+  labs(title = "Mean number of arrests per game by team: Away", 
+       x = "Away Team",
+       y = "Number of Arrest/Game") +
+  theme(legend.title = element_blank())
+```
+
+
+
+
+
+### 3.2 Predictions
+
+The prediction aspect of the analysis was simpler to gain a quantitative result with the root mean square error (RMSE) of the predictions being used to select the most accurate model. Although the  RMSE can be influenced by any outliers. Looking at Fig. 3.5 it displays the differing RMSE for each model. The main point to take away is the superior predictive ability of the deciision tree method (aside from `boosting`)
+The other important point is the GLM models built from the most important factors above have simliar very little change in RMSE which is unsurprising as the arrests did not fit any of the distributions. The GLMs also were much simpler to interpret. 
+
+
+```{r confint GLM, echo=FALSE, fig.width=12, fig.height=8, fig.cap= "Fig. 3.5. Comparison of the different RMSE of the different models"}
+RMSE <- c(RMSE.lm1, RMSE.lm2, RMSE.lm3, RMSE.lm4, RMSE.dt, RMSE.bagging, 
+                  RMSE.rf, RMSE.boost, RMSE.val, RMSE.lasso, RMSE.cv, RMSE.rr )
+
+Error_type <- c("GLM 1 ", "GLM 2", "GLM 3", "GLM 4", "Decision Tree", "Bagging", 
+                "Random Forest", "Boosting", "Validation", "Lasso ", "Cross Validation",
+                "Ridge Regression ")
+
+Model_Type <- c("GLM", "GLM", "GLM", "GLM", "Decision Tree", "Decision Tree", "Decision Tree",
+              "Decision Tree", "Model Selection",  "Model Selection", "Model Selection", 
+              "Model Selection")
+
+Model_Type <-factor(Model_Type)
+
+RMSE.df <- data.frame(RMSE, Error_type, Model_Type)
+
+ggplot(RMSE.df, aes(Error_type, RMSE, colour = Model_Type)) +
+  geom_point(size = 4) + 
+  scale_color_manual(values = c("red", "blue", "green")) + 
+  labs (x = "Model ") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+```
+
+
+
+\newpage
+
+## 4.0 Conclusion
+
+The aims to identify the important factors and create a model to predict the number of arrests overall was reasonably successful. The home team was the most dominant factor by quiet some margin which is understandable when looking at the Fig. 3.1 and makes sense that, but this doesn't give any information into what actually causes this. The big down side of having a character variable as the main one it makes the linear model difficult to interpret and visualize. The GLMs while consistently good are out competed by the prediction quality of the decision tree based methods for their simplicity and interpretability they result in the overall best model for the requirements. Approaching the problem again it would be worth trying to get a complete data set including all 32 teams and trying to examine the causation of the higher number of arrests. Unfortunately there was no new information regarding the results available to use as a testing set or create an updated model. 
+
+
+## 5.0 Litriture Cited
+
+Richardson, B., Fuller-Tyszkiewicz, M., O’Donnell, R., Ling, M. and Staiger, P.K., 2017. *"Regression tree analysis of ecological momentary assessment data."* Health Psychology Review, 11(3), pp.235-241.
+
+James, G., Witten, D., Hastie, T. and Tibshirani, R., 2013. *"An introduction to statistical learning"* (Vol. 112, p. 18). New York: springer.
+
+Venables, W.N. and Dichmont, C.M., 2004. *"GLMs, GAMs and GLMMs: an overview of theory for applications in fisheries research."*, Fisheries research, 70(2-3), pp.319-337.
+article: 
+
+Bradley Efron (2020) *"Prediction, Estimation, and Attribution, Journal of the
+American Statistical Association"*,  115:530, 636-655, DOI: 10.1080/01621459.2020.1762613
+
+
