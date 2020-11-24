@@ -13,6 +13,7 @@ output:
 1. Background 
  
   - 1.1 Introduction
+ 
   
 2. Methods  
  
@@ -45,7 +46,7 @@ output:
 ## 1.0 Background 
 
 ### 1.1 Introduction 
-For this analysis the brief set out was to analyze a real data and ask some interesting questions relating to the data. After searching through various websites this data set jumped out. It is a record of the number of people arrested at National Football League games starting in 2011 up until the 2015 season. Also included are 11 other factors such as the home score such as the visiting team, scores for both teams, the time the game was played etc.   
+For this analysis, the brief set out was to analyze a real data and ask some interesting questions. After searching through various websites this data set jumped out. It is a record of the number of people arrested at National Football League games starting in 2011 up until the 2015 season. Also included are 11 other factors such as the home score such as the visiting team, scores for both teams, the time the game was played etc.   
 
   * It is interesting and unique.  
   * Although the data is a number of years old there has not been an in depth  extraction of the data to answer any questions other than "What city had the most arrests over this period of time?"
@@ -72,7 +73,7 @@ library(tree)         # For making decision tree
 ```
 
 ```{r, include = FALSE}
-setwd("C:/Users/alexd/Desktop/C7801_Assignment")
+setwd("C:/Users/alexd/Desktop/C7801_Assignment/data_archive")
 NFL_data <- read.xlsx("arrests_book.xlsx")
 ```
 ```{r, echo = FALSE}
@@ -96,7 +97,7 @@ names <- names(NFL_data)
 df <- data.frame(names, var_type, var_description)
 ```
 \newpage
-```{r print data dictioanry, echo=FALSE}
+```{r print data dictioanry, echo=FALSE, fig.cap="Fig. 1.1. Data dictionary"}
 kable(df, format = "markdown")
 
 ```
@@ -108,7 +109,7 @@ From the first couple rows of data we can get a sense of the variables. We can s
 ## 2.0 Method 
 
 ### 2.1 Feature Data clenseing  
-From reading the original README from kaggle as mentioned above it does not include numbers from various team but there is are also varibales that require editing. 
+From reading the original README from kaggle as mentioned above it does not include numbers from various team but there is are also variables that require editing. 
 
 **Detroit**
 ```{r detroit, echo=FALSE, results = FALSE}
@@ -119,7 +120,7 @@ NFL_data <- NFL_data[-c(detroit),]
 ```{r, include = FALSE}
 l.detroit <- length(detroit)
 ```
-Detroit has no information provided relating to the number of arrests over the 5 year period. It would be difficult make a prediction of the average number of arrests for the entire team as we will see later on in the analysis that the home team is an important predictor. This means that all inputs for the detroit are removed
+Detroit has no information provided relating to the number of arrests over the 5 year period. It would be difficult make a prediction of the average number of arrests for the entire team as we will see later on in the analysis that the home team is an important predictor. This means that all inputs for the detroit are removed.
 We can see that there are `r l.detroit` NA values in arrests variable. 
 
 **Overtime**
@@ -208,18 +209,17 @@ qqPlot(x = NFL_data$arrests,
 ```
 It was tempting to remove the top one percent of the variables as outliers but on further inspection 5 out of the top 10 points are from the same team (San Diego Chargers), removing some of these may adversely affect the quality of the model. For this analysis no actions being taken as regards to removing outliers.  
 
-```{r, echo=FALSE, results = TRUE}
+```{r, echo=FALSE}
 outliers <- NFL_data[with(NFL_data, order(-arrests)), ]
 outliers[1:10, 5]
 ```
 
 ### 2.2 Model Selection
-Looking at the some of the graphs does offer some insight into what factors may be important or at the very least rule out the impact a variable such as `OT_flag` have. While these graphs do offer some insight and are interesting they do little to give quantifiable proof of the important factors. Model selection can be used to create prediction models as well as identify the important predictors. 
 
-Due to the score difference variable being created from the 2 other numeric variables it creates an error when running these functions so it is removed for until the decision tree methods. 
 
 
 The data is divided randomly into 2 sets; the training set(80%) and a test set(20%). The training set will be used to create the models and the test set then can be used to test the quality of the fit of the model. It will produce the test set error. 
+Due to the score difference variable being created from the 2 other numeric variables it creates an error when running these functions so it is removed for until the decision tree methods. 
 
 ```{r Test set, echo=FALSE}
 smp_size <- floor(0.8 * nrow(NFL_data))
@@ -288,7 +288,7 @@ plot(reg.summary2$adjr2, main = "Forward Stepwise Selection", xlab = "Number of 
 plot(reg.summary3$adjr2, main = "Backwards Stepwise Selection", xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
 ```
 
-Using the `coef` function it identifies the coefficient for the model, looking at the model with 8 variables as it has the max R^2 for the forward subset selection. 
+Using the `coef` function it identifies the coefficient for the model, looking at the model with 8 variables as it has the max $R^{2}$ for the forward subset selection. 
 
 ```{r subset coefficient, include=FALSE}
 coef(regfit.fwd, 8, complete = TRUE)
@@ -397,7 +397,7 @@ reg.best <- regsubsets(arrests ~. , data = NFL_data, nvmax = 12, method = "backw
 
 ```
 
-Fig. 2.3. Plots the number of varibales in the model against the average MSE, After cross validation the best model used 9 variables. All of these aside from the time of games were the dummy variables. Looking at the variables selected the majority are `home_team`variables with some `away_team`and `gametime_local`included. 
+Fig. 2.3. Plots the number of varibales in the model against the average MSE. After cross validation the best model used 9 variables. All of these aside from the time of games were the dummy variables. Looking at the variables selected the majority are `home_team` variables with some `away_team`and `gametime_local` included. 
 
 ```{r CV coefficents, echo = TRUE}
 coef(reg.best, 9)
@@ -458,7 +458,7 @@ MSE.rr <- round(MSE.rr, 2)
 RMSE.rr <- (sqrt(MSE.rr))
 ```
 
-A grid of 100 values ranging from -2 to 10 is created this will test model with 100 different $\lambda$ and give the MSE for 100 different models enabling us to circle in on the best $\lambda$ for the model. If we set the model up from just the intercept, the MSE would be {r intercept}, where as the average across all $\lambda$ was {r mean.rr}. Fig. 7. graphs the log of $\lambda$ on the x-axis with the resulting MSE on the y-axis. 
+A grid of 100 values ranging from 0.135 up to 22026 (plotted on the logarithmic scale) is created this will test model with 100 different $\lambda$ and give the MSE for 100 different models enabling us to circle in on the best $\lambda$ for the model. If we set the model up from just the intercept, the MSE would be {r intercept}, where as the average across all $\lambda$ was {r mean.rr}. Fig. 7. graphs the log of $\lambda$ on the x-axis with the resulting MSE on the y-axis. 
 
 
 
@@ -744,7 +744,7 @@ Looking back to the main objectives starting out this analysis the 2 main aims w
 
 2. Create a model that can predict the number of people arrested at an NFL game. 
 
-After applying a number of methods to the data along with a exploration into the data which can be found here **Github**.
+After applying a number of methods to the data along with a exploration into the data which can be found here https://github.com/alexdoyle115/C7081_Assignment/blob/main/C7081_assignment_EDA.rmd.
 
 ### 3.1 Key factors
 
@@ -816,7 +816,7 @@ mean.g<-aggregate(NFL_data$arrests, by = list(gametime = NFL_data$gametime),
 
 
 
-```{r Mean Gametime plot, echo=FALSE, fig.cap = "Fig. 3.3 Mean number of arrests of game time(Number of Kickoffs at this time)."}
+```{r Mean Gametime plot, echo=FALSE, fig.width=12, fig.height=8, fig.cap = "Fig. 3.3 Mean number of arrests of game time(Number of Kickoffs at this time)."}
 ggplot(mean.g, aes(gametime, x)) +
   geom_bar(aes(fill = x), stat = "identity") +
   scale_fill_gradient(low = "blue", high = "red", ) +
@@ -882,7 +882,7 @@ ggplot(RMSE.df, aes(Error_type, RMSE, colour = Model_Type)) +
 
 ## 4.0 Conclusion
 
-The aims to identify the important factors and create a model to predict the number of arrests overall was reasonably successful. The home team was the most dominant factor by quiet some margin which is understandable when looking at the Fig. 3.1 and makes sense that, but this doesn't give any information into what actually causes this. The big down side of having a character variable as the main one it makes the linear model difficult to interpret and visualize. The GLMs while consistently good are out competed by the prediction quality of the decision tree based methods for their simplicity and interpretability they result in the overall best model for the requirements. Approaching the problem again it would be worth trying to get a complete data set including all 32 teams and trying to examine the causation of the higher number of arrests. Unfortunately there was no new information regarding the results available to use as a testing set or create an updated model. 
+The aims to identify the important factors and create a model to predict the number of arrests overall was reasonably successful. The home team was the most dominant factor by quiet some margin which is understandable when looking at the Fig. 3.1 and makes sense that, but this doesn't give any information into what actually causes this. The big down side of having a character variable as the main one it makes the linear model difficult to interpret and visualize. The GLMs while consistently good are out competed by the prediction quality of the decision tree based methods. Their simplicity and interpretability make up for this giving in my opinion the overall best model for the requirements. Approaching the problem again it would be worth trying to get a complete data set including all 32 teams and trying to examine the causation of the higher number of arrests. Unfortunately there was no new information regarding the results available to use as a testing set or create an updated model. 
 
 
 ## 5.0 Litriture Cited
